@@ -92,6 +92,7 @@ type ProgressBar struct {
 	isFinish   bool
 
 	startTime  time.Time
+	finishTime time.Time
 	startValue int64
 
 	changeTime time.Time
@@ -225,6 +226,7 @@ func (pb *ProgressBar) SetWidth(width int) *ProgressBar {
 func (pb *ProgressBar) Finish() {
 	//Protect multiple calls
 	pb.finishOnce.Do(func() {
+		pb.finishTime = time.Now()
 		close(pb.finish)
 		pb.write(atomic.LoadInt64(&pb.Total), atomic.LoadInt64(&pb.current))
 		pb.mu.Lock()
@@ -281,6 +283,14 @@ func (pb *ProgressBar) write(total, current int64) {
 	defer pb.mu.Unlock()
 	width := pb.GetWidth()
 
+	// Display the correct elapsed time / speed after finish
+	var now time.Time
+	if pb.isFinish {
+		now = pb.finishTime
+	} else {
+		now = time.Now()
+	}
+
 	var percentBox, countersBox, timeLeftBox, timeSpentBox, speedBox, barBox, end, out string
 
 	// percents
@@ -307,7 +317,7 @@ func (pb *ProgressBar) write(total, current int64) {
 
 	// time left
 	currentFromStart := current - pb.startValue
-	fromStart := time.Now().Sub(pb.startTime)
+	fromStart := now.Sub(pb.startTime)
 	lastChangeTime := pb.changeTime
 	fromChange := lastChangeTime.Sub(pb.startTime)
 
@@ -344,7 +354,7 @@ func (pb *ProgressBar) write(total, current int64) {
 
 	// speed
 	if pb.ShowSpeed && currentFromStart > 0 {
-		fromStart := time.Now().Sub(pb.startTime)
+		fromStart := now.Sub(pb.startTime)
 		speed := float64(currentFromStart) / (float64(fromStart) / float64(time.Second))
 		speedBox = " " + Format(int64(speed)).To(pb.Units).Width(pb.UnitsWidth).PerSec().String()
 	}
