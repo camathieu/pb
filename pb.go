@@ -90,6 +90,7 @@ type ProgressBar struct {
 	finishOnce sync.Once //Guards isFinish
 	finish     chan struct{}
 	isFinish   bool
+	finishErr  error
 
 	startTime  time.Time
 	finishTime time.Time
@@ -241,6 +242,11 @@ func (pb *ProgressBar) Finish() {
 	})
 }
 
+func (pb *ProgressBar) FinishError(err error) {
+	pb.finishErr = err
+	pb.Finish()
+}
+
 // IsFinished return boolean
 func (pb *ProgressBar) IsFinished() bool {
 	pb.mu.Lock()
@@ -293,118 +299,122 @@ func (pb *ProgressBar) write(total, current int64) {
 
 	var percentBox, countersBox, timeLeftBox, timeSpentBox, speedBox, barBox, end, out string
 
-	// percents
-	if pb.ShowPercent {
-		var percent float64
-		if total > 0 {
-			percent = float64(current) / (float64(total) / float64(100))
-		} else {
-			percent = float64(current) / float64(100)
-		}
-		percentBox = fmt.Sprintf(" %6.02f%%", percent)
-	}
-
-	// counters
-	if pb.ShowCounters {
-		current := Format(current).To(pb.Units).Width(pb.UnitsWidth)
-		if total > 0 {
-			totalS := Format(total).To(pb.Units).Width(pb.UnitsWidth)
-			countersBox = fmt.Sprintf(" %s / %s ", current, totalS)
-		} else {
-			countersBox = fmt.Sprintf(" %s / ? ", current)
-		}
-	}
-
-	// time left
-	currentFromStart := current - pb.startValue
-	fromStart := now.Sub(pb.startTime)
-	lastChangeTime := pb.changeTime
-	fromChange := lastChangeTime.Sub(pb.startTime)
-
-	if pb.ShowElapsedTime {
-		timeSpentBox = fmt.Sprintf(" %s ", (fromStart/time.Second)*time.Second)
-	}
-
-	select {
-	case <-pb.finish:
-		if pb.ShowFinalTime {
-			var left time.Duration
-			left = (fromStart / time.Second) * time.Second
-			timeLeftBox = fmt.Sprintf(" %s", left.String())
-		}
-	default:
-		if pb.ShowTimeLeft && currentFromStart > 0 {
-			perEntry := fromChange / time.Duration(currentFromStart)
-			var left time.Duration
+	if pb.finishErr != nil {
+		out = pb.prefix + pb.finishErr.Error() + pb.postfix
+	} else {
+		// percents
+		if pb.ShowPercent {
+			var percent float64
 			if total > 0 {
-				left = time.Duration(total-current) * perEntry
-				left -= time.Since(lastChangeTime)
-				left = (left / time.Second) * time.Second
-			}
-			if left > 0 {
-				timeLeft := Format(int64(left)).To(U_DURATION).String()
-				timeLeftBox = fmt.Sprintf(" %s", timeLeft)
-			}
-		}
-	}
-
-	if len(timeLeftBox) < pb.TimeBoxWidth {
-		timeLeftBox = fmt.Sprintf("%s%s", strings.Repeat(" ", pb.TimeBoxWidth-len(timeLeftBox)), timeLeftBox)
-	}
-
-	// speed
-	if pb.ShowSpeed && currentFromStart > 0 {
-		fromStart := now.Sub(pb.startTime)
-		speed := float64(currentFromStart) / (float64(fromStart) / float64(time.Second))
-		speedBox = " " + Format(int64(speed)).To(pb.Units).Width(pb.UnitsWidth).PerSec().String()
-	}
-
-	barWidth := escapeAwareRuneCountInString(countersBox + pb.BarStart + pb.BarEnd + percentBox + timeSpentBox + timeLeftBox + speedBox + pb.prefix + pb.postfix)
-	// bar
-	if pb.ShowBar {
-		size := width - barWidth
-		if size > 0 {
-			if total > 0 {
-				curSize := int(math.Ceil((float64(current) / float64(total)) * float64(size)))
-				emptySize := size - curSize
-				barBox = pb.BarStart
-				if emptySize < 0 {
-					emptySize = 0
-				}
-				if curSize > size {
-					curSize = size
-				}
-
-				cursorLen := escapeAwareRuneCountInString(pb.Current)
-				if emptySize <= 0 {
-					barBox += strings.Repeat(pb.Current, curSize/cursorLen)
-				} else if curSize > 0 {
-					cursorEndLen := escapeAwareRuneCountInString(pb.CurrentN)
-					cursorRepetitions := (curSize - cursorEndLen) / cursorLen
-					barBox += strings.Repeat(pb.Current, cursorRepetitions)
-					barBox += pb.CurrentN
-				}
-
-				emptyLen := escapeAwareRuneCountInString(pb.Empty)
-				barBox += strings.Repeat(pb.Empty, emptySize/emptyLen)
-				barBox += pb.BarEnd
+				percent = float64(current) / (float64(total) / float64(100))
 			} else {
-				pos := size - int(current)%int(size)
-				barBox = pb.BarStart
-				if pos-1 > 0 {
-					barBox += strings.Repeat(pb.Empty, pos-1)
-				}
-				barBox += pb.Current
-				if size-pos-1 > 0 {
-					barBox += strings.Repeat(pb.Empty, size-pos-1)
-				}
-				barBox += pb.BarEnd
+				percent = float64(current) / float64(100)
+			}
+			percentBox = fmt.Sprintf(" %6.02f%%", percent)
+		}
+
+		// counters
+		if pb.ShowCounters {
+			current := Format(current).To(pb.Units).Width(pb.UnitsWidth)
+			if total > 0 {
+				totalS := Format(total).To(pb.Units).Width(pb.UnitsWidth)
+				countersBox = fmt.Sprintf(" %s / %s ", current, totalS)
+			} else {
+				countersBox = fmt.Sprintf(" %s / ? ", current)
 			}
 		}
-	}
 
-	// check len
-	out = pb.prefix + timeSpentBox + countersBox + barBox + percentBox + speedBox + timeLeftBox + pb.postfix
+		// time left
+		currentFromStart := current - pb.startValue
+		fromStart := now.Sub(pb.startTime)
+		lastChangeTime := pb.changeTime
+		fromChange := lastChangeTime.Sub(pb.startTime)
+
+		if pb.ShowElapsedTime {
+			timeSpentBox = fmt.Sprintf(" %s ", (fromStart/time.Second)*time.Second)
+		}
+
+		select {
+		case <-pb.finish:
+			if pb.ShowFinalTime {
+				var left time.Duration
+				left = (fromStart / time.Second) * time.Second
+				timeLeftBox = fmt.Sprintf(" %s", left.String())
+			}
+		default:
+			if pb.ShowTimeLeft && currentFromStart > 0 {
+				perEntry := fromChange / time.Duration(currentFromStart)
+				var left time.Duration
+				if total > 0 {
+					left = time.Duration(total-current) * perEntry
+					left -= time.Since(lastChangeTime)
+					left = (left / time.Second) * time.Second
+				}
+				if left > 0 {
+					timeLeft := Format(int64(left)).To(U_DURATION).String()
+					timeLeftBox = fmt.Sprintf(" %s", timeLeft)
+				}
+			}
+		}
+
+		if len(timeLeftBox) < pb.TimeBoxWidth {
+			timeLeftBox = fmt.Sprintf("%s%s", strings.Repeat(" ", pb.TimeBoxWidth-len(timeLeftBox)), timeLeftBox)
+		}
+
+		// speed
+		if pb.ShowSpeed && currentFromStart > 0 {
+			fromStart := now.Sub(pb.startTime)
+			speed := float64(currentFromStart) / (float64(fromStart) / float64(time.Second))
+			speedBox = " " + Format(int64(speed)).To(pb.Units).Width(pb.UnitsWidth).PerSec().String()
+		}
+
+		barWidth := escapeAwareRuneCountInString(countersBox + pb.BarStart + pb.BarEnd + percentBox + timeSpentBox + timeLeftBox + speedBox + pb.prefix + pb.postfix)
+		// bar
+		if pb.ShowBar {
+			size := width - barWidth
+			if size > 0 {
+				if total > 0 {
+					curSize := int(math.Ceil((float64(current) / float64(total)) * float64(size)))
+					emptySize := size - curSize
+					barBox = pb.BarStart
+					if emptySize < 0 {
+						emptySize = 0
+					}
+					if curSize > size {
+						curSize = size
+					}
+
+					cursorLen := escapeAwareRuneCountInString(pb.Current)
+					if emptySize <= 0 {
+						barBox += strings.Repeat(pb.Current, curSize/cursorLen)
+					} else if curSize > 0 {
+						cursorEndLen := escapeAwareRuneCountInString(pb.CurrentN)
+						cursorRepetitions := (curSize - cursorEndLen) / cursorLen
+						barBox += strings.Repeat(pb.Current, cursorRepetitions)
+						barBox += pb.CurrentN
+					}
+
+					emptyLen := escapeAwareRuneCountInString(pb.Empty)
+					barBox += strings.Repeat(pb.Empty, emptySize/emptyLen)
+					barBox += pb.BarEnd
+				} else {
+					pos := size - int(current)%int(size)
+					barBox = pb.BarStart
+					if pos-1 > 0 {
+						barBox += strings.Repeat(pb.Empty, pos-1)
+					}
+					barBox += pb.Current
+					if size-pos-1 > 0 {
+						barBox += strings.Repeat(pb.Empty, size-pos-1)
+					}
+					barBox += pb.BarEnd
+				}
+			}
+		}
+
+		// check len
+		out = pb.prefix + timeSpentBox + countersBox + barBox + percentBox + speedBox + timeLeftBox + pb.postfix
+	}
 
 	if cl := escapeAwareRuneCountInString(out); cl < width {
 		end = strings.Repeat(" ", width-cl)
